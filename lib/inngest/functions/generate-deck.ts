@@ -121,3 +121,71 @@ export const generateDeck = inngest.createFunction(
     }
   },
 );
+
+/**
+ * Direct generation executor used as a fallback when the Inngest local dev server
+ * is not running, so generation still completes reliably.
+ */
+export async function executeDeckGeneration(deckId: string) {
+  const deck = await prisma.deck.findUnique({ where: { id: deckId } });
+  if (!deck) return;
+
+  try {
+    await prisma.deck.update({
+      where: { id: deckId },
+      data: { status: DeckStatus.GENERATING, errorMessage: null },
+    });
+
+    const pitchDeck = await generatePitchDeck(deck.idea);
+
+    await prisma.deck.update({
+      where: { id: deckId },
+      data: { title: pitchDeck.deckTitle },
+    });
+
+    for (let index = 0; index < pitchDeck.slides.length; index++) {
+      const slide = pitchDeck.slides[index];
+      const order = index + 1;
+
+      let imageUrl: string | null = null;
+      try {
+        const imageBuffer = await generateSlideImage(slide.imagePrompt);
+        const fileName = `deck-${deckId}-slide-${order}.png`;
+        imageUrl = await uploadSlideImage(imageBuffer, fileName);
+      } catch (imgError) {
+        console.error(`Failed to generate/upload image for slide ${order}:`, imgError);
+      }
+
+      await prisma.slide.create({
+        data: {
+          deckId,
+          order,
+          title: slide.title,
+          content: slide.content,
+          imagePrompt: slide.imagePrompt,
+          imageUrl,
+        },
+      });
+    }
+
+    await prisma.deck.update({
+      where: { id: deckId },
+      data: { status: DeckStatus.COMPLETE },
+    });
+  } catch (error) {
+    const message =
+      error instanceof PitchDeckGenerationError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "Unknown error during deck generation";
+
+    await prisma.deck.update({
+      where: { id: deckId },
+      data: {
+        status: DeckStatus.FAILED,
+        errorMessage: message,
+      },
+    });
+  }
+}

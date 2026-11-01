@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { DeckStatus } from "@/lib/generated/prisma/client";
 import { inngest } from "@/lib/inngest/client";
+import { executeDeckGeneration } from "@/lib/inngest/functions/generate-deck";
 
 const createDeckSchema = z.object({
   idea: z
@@ -54,20 +55,37 @@ export async function POST(request: Request) {
     );
   }
 
-  const deck = await prisma.deck.create({
-    data: {
-      idea: parsed.data.idea,
-      status: DeckStatus.PENDING,
-    },
-  });
+  try {
+    const deck = await prisma.deck.create({
+      data: {
+        idea: parsed.data.idea,
+        status: DeckStatus.PENDING,
+      },
+    });
 
-  await inngest.send({
-    name: "deck/generate",
-    data: { deckId: deck.id },
-  });
+    try {
+      await inngest.send({
+        name: "deck/generate",
+        data: { deckId: deck.id },
+      });
+    } catch (inngestError) {
+      console.warn(
+        "Inngest dev server not reachable (make sure `npx inngest-cli@latest dev` is running). Falling back to direct background execution.",
+        inngestError,
+      );
+      // Run in background without awaiting so API returns 201 immediately
+      void executeDeckGeneration(deck.id);
+    }
 
-  return NextResponse.json(
-    { id: deck.id, status: deck.status },
-    { status: 201 },
-  );
+    return NextResponse.json(
+      { id: deck.id, status: deck.status },
+      { status: 201 },
+    );
+  } catch (error) {
+    console.error("Failed to create deck:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to create deck" },
+      { status: 500 },
+    );
+  }
 }
