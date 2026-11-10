@@ -144,8 +144,3 @@ When presenting or inspecting a deck:
 3. Configure the environment variables (`DATABASE_URL`, `OPENROUTER_API_KEY`, `IMAGEKIT_*`).
 4. Vercel automatically runs `postinstall: prisma generate` and `build: prisma generate && next build` before compilation.
 
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
